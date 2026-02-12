@@ -12,6 +12,21 @@ if (!searchName) {
     return;
 }
 
+// Hilfsfunktion: Datum in ISO-Format umwandeln (analog zum Python-Skript)
+const parseToISO = (dateStr) => {
+    if (!dateStr) return "";
+    const cleanStr = dateStr.trim();
+    // Versuche DD.MM.YYYY
+    const match = cleanStr.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+    if (match) {
+        const [_, d, m, y] = match;
+        return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+    }
+    // Versuche nur das Jahr YYYY
+    const yearMatch = cleanStr.match(/(\d{4})/);
+    return yearMatch ? yearMatch[1] : cleanStr;
+};
+
 // 2. RISM API Suche
 const response = await fetch(`https://rism.online/search?mode=people&q=${encodeURIComponent(searchName)}`, {
     headers: { 'Accept': 'application/ld+json' }
@@ -23,7 +38,7 @@ if (!searchData.items || searchData.items.length === 0) {
     return;
 }
 
-// 3. Auswahl aus den Ergebnissen
+// 3. Auswahl
 const selected = await tp.system.suggester(
     (item) => `${item.label.none[0]} (ID: ${item.id.split('/').pop()})`,
     searchData.items.slice(0, 10)
@@ -40,26 +55,45 @@ const d = await detailRes.json();
 
 // 5. Daten parsen
 let updates = {};
+
+// Biografische Details (Orte & Daten)
 const summary = d.biographicalDetails?.summary || [];
 summary.forEach(i => {
-    const label = i.label?.de?.[0];
+    const label = i.label?.de?.[0] || i.label?.en?.[0];
     const val = i.value?.de || i.value?.none || i.value?.en || [];
-    if (label) {
-        if (label.includes("Lebensdaten") || label.includes("Geburts- und Todesdaten")) {
-            const parts = val[0]?.split("-");
-            if (parts?.length === 2) {
-                updates["Geburtsdatum"] = parts[0].trim();
-                updates["Sterbedatum"] = parts[1].trim();
+    
+    if (label && val.length > 0) {
+        if (label.match(/Lebensdaten|Andere Lebensdaten|Geburts- und Todesdaten/)) {
+            const parts = val[0].split("-");
+            if (parts.length === 2) {
+                updates["Geburtsdatum"] = parseToISO(parts[0]);
+                updates["Sterbedatum"] = parseToISO(parts[1]);
             }
         } else {
+            // Dies fängt Geburtsort, Sterbeort, Wirkungsort automatisch ein
             updates[label] = val.length === 1 ? val[0] : val;
         }
     }
 });
 
+// Namensvarianten
 const variants = d.nameVariants?.items?.flatMap(v => v.value?.none || []) || [];
 if (variants.length) updates["Namensvarianten"] = variants;
 
+// Beziehungen (Lehrer, Schüler, etc.)
+if (d.relationships?.items) {
+    d.relationships.items.forEach(item => {
+        const role = item.role?.label?.de?.[0] || item.role?.label?.en?.[0];
+        const target = item.relatedTo?.label?.none?.[0];
+        if (role && target) {
+            if (!updates[role]) updates[role] = [];
+            if (typeof updates[role] === 'string') updates[role] = [updates[role]];
+            if (!updates[role].includes(target)) updates[role].push(target);
+        }
+    });
+}
+
+// Normdaten & IDs
 d.externalAuthorities?.items?.forEach(auth => {
     const label = auth.label?.none?.[0];
     if (label && label.includes(":")) {
@@ -70,9 +104,7 @@ d.externalAuthorities?.items?.forEach(auth => {
 
 // 6. DATEI AKTUALISIEREN
 const activeFile = app.workspace.getActiveFile();
-
 if (activeFile) {
-    // Frontmatter verarbeiten
     await app.fileManager.processFrontMatter(activeFile, (fm) => {
         fm["RISM_ID"] = rid;
         for (const [key, value] of Object.entries(updates)) {
@@ -80,7 +112,7 @@ if (activeFile) {
         }
     });
 
-    // Body (Links & Literatur)
+    // Links & Literatur
     const bodyLinks = d.externalResources?.items?.map(r => `- [${r.label?.none?.[0] || r.url}](${r.url})`).join("\n") || "";
     const lit = d.notes?.notes?.flatMap(n => n.value?.none || []).map(l => `- ${l.replace(/<[^>]*>/g, '')}`).join("\n") || "";
 
@@ -89,7 +121,6 @@ if (activeFile) {
     if (lit) bodyAppend += `\n\n## RISM Literatur\n${lit}`;
 
     if (bodyAppend) {
-        // Wir nutzen process(), um den Text sicher ans Ende zu hängen
         await app.vault.process(activeFile, (data) => {
             if (!data.includes("## Links") && !data.includes("## RISM Literatur")) {
                 return data + bodyAppend;
@@ -97,7 +128,6 @@ if (activeFile) {
             return data;
         });
     }
-    
     new Notice("RISM Daten erfolgreich geladen!");
 }
 %>
