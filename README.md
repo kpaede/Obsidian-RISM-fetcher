@@ -2,6 +2,8 @@
 Script for the Obsidian Templater Plugin.
 Fetches composer entries from the RISM Api and saves them in your current Markdown File as Metadata and Text. Fields in German. Feel free to adjust it to your needs.
 
+How to execute: 1. Save the script below as a Template in your Templater folder. 2. Click once in the text are of your file. 3. Execute the Template via Templater and type your desired composer in the popup that appears. 4. The script fetched the data from the RISM Api.
+
 ![gif](https://github.com/user-attachments/assets/adfa6916-cb4a-454f-ae78-ca62a30b7b74)
 
 
