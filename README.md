@@ -1,5 +1,9 @@
 # Obsidian-RISM-fetcher
-fetches composer entries with an Obsidian Template. Fields in German. Feed free to adjust it to your needs.
+Script for the Obsidian Templater Plugin.
+Fetches composer entries from the RISM Api and svaes them as Metadata and Text. Fields in German. Feel free to adjust it to your needs.
+
+![gif](https://github.com/user-attachments/assets/adfa6916-cb4a-454f-ae78-ca62a30b7b74)
+
 
 ```
 <%*
@@ -12,17 +16,15 @@ if (!searchName) {
     return;
 }
 
-// Hilfsfunktion: Datum in ISO-Format umwandeln (analog zum Python-Skript)
+// Hilfsfunktion: Datum in ISO-Format umwandeln
 const parseToISO = (dateStr) => {
     if (!dateStr) return "";
     const cleanStr = dateStr.trim();
-    // Versuche DD.MM.YYYY
     const match = cleanStr.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
     if (match) {
         const [_, d, m, y] = match;
         return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
     }
-    // Versuche nur das Jahr YYYY
     const yearMatch = cleanStr.match(/(\d{4})/);
     return yearMatch ? yearMatch[1] : cleanStr;
 };
@@ -38,7 +40,7 @@ if (!searchData.items || searchData.items.length === 0) {
     return;
 }
 
-// 3. Auswahl
+// 3. Auswahl des Eintrags
 const selected = await tp.system.suggester(
     (item) => `${item.label.none[0]} (ID: ${item.id.split('/').pop()})`,
     searchData.items.slice(0, 10)
@@ -53,10 +55,10 @@ const detailRes = await fetch(`https://rism.online/people/${rid}`, {
 });
 const d = await detailRes.json();
 
-// 5. Daten parsen
+// 5. DATEN PARSEN
 let updates = {};
 
-// Biografische Details (Orte & Daten)
+// A) Biografische Details für die Properties
 const summary = d.biographicalDetails?.summary || [];
 summary.forEach(i => {
     const label = i.label?.de?.[0] || i.label?.en?.[0];
@@ -70,17 +72,12 @@ summary.forEach(i => {
                 updates["Sterbedatum"] = parseToISO(parts[1]);
             }
         } else {
-            // Dies fängt Geburtsort, Sterbeort, Wirkungsort automatisch ein
             updates[label] = val.length === 1 ? val[0] : val;
         }
     }
 });
 
-// Namensvarianten
-const variants = d.nameVariants?.items?.flatMap(v => v.value?.none || []) || [];
-if (variants.length) updates["Namensvarianten"] = variants;
-
-// Beziehungen (Lehrer, Schüler, etc.)
+// B) Beziehungen (Lehrer, Schüler, etc.)
 if (d.relationships?.items) {
     d.relationships.items.forEach(item => {
         const role = item.role?.label?.de?.[0] || item.role?.label?.en?.[0];
@@ -93,7 +90,7 @@ if (d.relationships?.items) {
     });
 }
 
-// Normdaten & IDs
+// C) Normdaten & IDs
 d.externalAuthorities?.items?.forEach(auth => {
     const label = auth.label?.none?.[0];
     if (label && label.includes(":")) {
@@ -105,6 +102,7 @@ d.externalAuthorities?.items?.forEach(auth => {
 // 6. DATEI AKTUALISIEREN
 const activeFile = app.workspace.getActiveFile();
 if (activeFile) {
+    // Frontmatter (Properties) aktualisieren
     await app.fileManager.processFrontMatter(activeFile, (fm) => {
         fm["RISM_ID"] = rid;
         for (const [key, value] of Object.entries(updates)) {
@@ -112,23 +110,42 @@ if (activeFile) {
         }
     });
 
-    // Links & Literatur
-    const bodyLinks = d.externalResources?.items?.map(r => `- [${r.label?.none?.[0] || r.url}](${r.url})`).join("\n") || "";
-    const lit = d.notes?.notes?.flatMap(n => n.value?.none || []).map(l => `- ${l.replace(/<[^>]*>/g, '')}`).join("\n") || "";
-
+    // --- TEXT-BLOCK GENERIEREN (Body) ---
     let bodyAppend = "";
+
+    // 1. Werkkataloge (mit Link)
+    if (d.works?.worksCatalogs?.items) {
+        const cats = d.works.worksCatalogs.items.map(i => {
+            const title = i.label?.none?.[0] || i.label?.de?.[0] || "Katalog";
+            return `- [${title}](${i.id})`;
+        }).join("\n");
+        if (cats) bodyAppend += `\n\n## Werkkatalog\n${cats}`;
+    }
+
+    // 2. Werk-Referenzen
+    if (d.works?.workReferences?.items) {
+        const refs = d.works.workReferences.items.map(i => `- ${i.value} [GND](${i.url})`).join("\n");
+        if (refs) bodyAppend += `\n\n## Werk-Referenzen\n${refs}`;
+    }
+
+    // 3. Links
+    const bodyLinks = d.externalResources?.items?.map(r => `- [${r.label?.none?.[0] || r.url}](${r.url})`).join("\n") || "";
     if (bodyLinks) bodyAppend += `\n\n## Links\n${bodyLinks}`;
+
+    // 4. Literatur & Bemerkungen
+    const lit = d.notes?.notes?.flatMap(n => n.value?.none || []).map(l => `- ${l.replace(/<[^>]*>/g, '')}`).join("\n") || "";
     if (lit) bodyAppend += `\n\n## RISM Literatur\n${lit}`;
 
+    // Text in die Datei schreiben (nur wenn Sektionen nicht existieren)
     if (bodyAppend) {
         await app.vault.process(activeFile, (data) => {
-            if (!data.includes("## Links") && !data.includes("## RISM Literatur")) {
+            if (!data.includes("## Links") && !data.includes("## RISM Literatur") && !data.includes("## Werkkatalog")) {
                 return data + bodyAppend;
             }
             return data;
         });
     }
-    new Notice("RISM Daten erfolgreich geladen!");
+    new Notice("RISM Daten inklusive Werkkatalog & Links geladen!");
 }
 %>
 ```
