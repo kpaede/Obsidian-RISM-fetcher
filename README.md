@@ -1,6 +1,6 @@
 # Obsidian-RISM-fetcher
 Script for the Obsidian Templater Plugin.
-Fetches composer entries from the RISM Api and svaes them as Metadata and Text. Fields in German. Feel free to adjust it to your needs.
+Fetches composer entries from the RISM Api and saves them in your current Markdown File as Metadata and Text. Fields in German. Feel free to adjust it to your needs.
 
 ![gif](https://github.com/user-attachments/assets/adfa6916-cb4a-454f-ae78-ca62a30b7b74)
 
